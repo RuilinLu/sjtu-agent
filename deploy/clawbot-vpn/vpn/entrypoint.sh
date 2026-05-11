@@ -4,6 +4,7 @@ set -eu
 : "${SJTU_VPN_SERVER:=stuv4.vpn.sjtu.edu.cn}"
 : "${SJTU_VPN_ID:=@stu.vpn.sjtu.edu.cn}"
 : "${SJTU_VPN_RIGHTSUBNET:=0.0.0.0/0}"
+: "${SJTU_VPN_AAA_IDENTITY:=@radius.net.sjtu.edu.cn}"
 : "${SJTU_VPN_LEFTAUTH:=eap-peap}"
 : "${SJTU_VPN_RIGHTAUTH:=pubkey}"
 : "${SJTU_VPN_USER:?SJTU_VPN_USER is required}"
@@ -22,13 +23,14 @@ config setup
 conn sjtu-student
     keyexchange=ikev2
     auto=start
-    left=%defaultroute
+    left=%config
     leftsourceip=%config
-    leftid=${SJTU_VPN_USER}
     leftauth=${SJTU_VPN_LEFTAUTH}
     eap_identity=${SJTU_VPN_USER}
+    aaa_identity=${SJTU_VPN_AAA_IDENTITY}
     right=${SJTU_VPN_SERVER}
     rightid=${SJTU_VPN_ID}
+    rightsendcert=never
     rightauth=${SJTU_VPN_RIGHTAUTH}
     rightsubnet=${SJTU_VPN_RIGHTSUBNET}
     fragmentation=yes
@@ -38,7 +40,7 @@ conn sjtu-student
 EOF
 
 cat >/etc/ipsec.secrets <<EOF
-${SJTU_VPN_USER} : EAP "${SJTU_VPN_PASSWORD}"
+"${SJTU_VPN_USER}" : EAP "${SJTU_VPN_PASSWORD}"
 EOF
 chmod 600 /etc/ipsec.secrets
 
