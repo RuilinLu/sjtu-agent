@@ -56,8 +56,14 @@ services:
       - .env
     environment:
       SJTU_AGENT_HOME: /data/sjtu-agent
+      JACCOUNT_USERNAME: ${JACCOUNT_USERNAME:-}
+      JACCOUNT_PASSWORD: ${JACCOUNT_PASSWORD:-}
+      ZHIYUAN_API_KEY: ${ZHIYUAN_API_KEY:-}
       ZHIYUAN_BASE_URL: ${ZHIYUAN_BASE_URL:-https://models.sjtu.edu.cn/api/v1}
       ZHIYUAN_MODEL: ${ZHIYUAN_MODEL:-deepseek-chat}
+      OPENCLAW_PUSH_URL: ${OPENCLAW_PUSH_URL:-}
+      OPENCLAW_PUSH_TOKEN: ${OPENCLAW_PUSH_TOKEN:-}
+      OPENCLAW_PUSH_TO: ${OPENCLAW_PUSH_TO:-}
     volumes:
       - /data/sjtu-agent:/data/sjtu-agent
     command: ["sjtu-agent", "mcp", "--http", "--host", "0.0.0.0", "--port", "8765"]
@@ -76,6 +82,11 @@ services:
       - .env
     environment:
       SJTU_AGENT_HOME: /data/sjtu-agent
+      JACCOUNT_USERNAME: ${JACCOUNT_USERNAME:-}
+      JACCOUNT_PASSWORD: ${JACCOUNT_PASSWORD:-}
+      OPENCLAW_PUSH_URL: ${OPENCLAW_PUSH_URL:-}
+      OPENCLAW_PUSH_TOKEN: ${OPENCLAW_PUSH_TOKEN:-}
+      OPENCLAW_PUSH_TO: ${OPENCLAW_PUSH_TO:-}
     volumes:
       - /data/sjtu-agent:/data/sjtu-agent
     command: ["sh", "-c", "while true; do sjtu-agent remind-check; sleep ${REMIND_INTERVAL_SECONDS:-60}; done"]
@@ -94,6 +105,14 @@ services:
       - .env
     environment:
       SJTU_AGENT_HOME: /data/sjtu-agent
+      JACCOUNT_USERNAME: ${JACCOUNT_USERNAME:-}
+      JACCOUNT_PASSWORD: ${JACCOUNT_PASSWORD:-}
+      ZHIYUAN_API_KEY: ${ZHIYUAN_API_KEY:-}
+      ZHIYUAN_BASE_URL: ${ZHIYUAN_BASE_URL:-https://models.sjtu.edu.cn/api/v1}
+      ZHIYUAN_MODEL: ${ZHIYUAN_MODEL:-deepseek-chat}
+      OPENCLAW_PUSH_URL: ${OPENCLAW_PUSH_URL:-}
+      OPENCLAW_PUSH_TOKEN: ${OPENCLAW_PUSH_TOKEN:-}
+      OPENCLAW_PUSH_TO: ${OPENCLAW_PUSH_TO:-}
     volumes:
       - /data/sjtu-agent:/data/sjtu-agent
     command: ["sh", "-c", "while true; do if [ \"$(date +%H:%M)\" = \"${DAILY_REPORT_TIME:-08:00}\" ]; then sjtu-agent daily-report; sleep 70; fi; sleep 20; done"]
