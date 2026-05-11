@@ -9,6 +9,11 @@ set -eu
 : "${SJTU_VPN_USER:?SJTU_VPN_USER is required}"
 : "${SJTU_VPN_PASSWORD:?SJTU_VPN_PASSWORD is required}"
 
+mkdir -p /etc/ipsec.d/cacerts
+if [ -f /etc/ssl/certs/ISRG_Root_X1.pem ]; then
+    cp /etc/ssl/certs/ISRG_Root_X1.pem /etc/ipsec.d/cacerts/ISRG_Root_X1.pem
+fi
+
 cat >/etc/ipsec.conf <<EOF
 config setup
     uniqueids=no
