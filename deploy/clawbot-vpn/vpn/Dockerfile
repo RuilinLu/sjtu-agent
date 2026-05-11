@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl iproute2 iptables strongswan strongswan-pki libcharon-extra-plugins \
+       libcharon-extauth-plugins libstrongswan-extra-plugins \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
