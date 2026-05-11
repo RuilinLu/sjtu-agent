@@ -21,6 +21,7 @@ remind_check.py — 后台提醒检查脚本，由 launchd 每分钟调用。
 """
 
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -147,6 +148,11 @@ def _load_pending_ddls(cfg: dict) -> list[dict]:
 
 def _check_deadline_guard(state: dict, test_mode: bool = False) -> bool:
     cfg = _load_cfg()
+    env_enabled = os.environ.get("SJTU_AGENT_DDL_GUARD_ENABLED", "").strip().lower()
+    if env_enabled in {"0", "false", "no", "off"}:
+        return False
+    if env_enabled in {"1", "true", "yes", "on"}:
+        cfg["ddl_deadline_guard_enabled"] = True
     if cfg.get("ddl_deadline_guard_enabled", True) is False:
         return False
 

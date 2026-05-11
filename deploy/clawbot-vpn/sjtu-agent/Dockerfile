@@ -13,11 +13,14 @@ RUN apt-get update \
 COPY pyproject.toml requirements.txt README.md ./
 COPY sjtu_agent ./sjtu_agent
 COPY agent.py care_check.py daily_report.py ddl_checker.py login.py mcp_server.py news_digest.py remind_check.py setup_config.py shuiyuan_watcher.py telegram_bot.py wechat_bot.py ./
+COPY deploy/clawbot-vpn/sjtu-agent/entrypoint.sh /entrypoint.sh
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install -e . \
-    && python -m playwright install --with-deps chromium
+    && python -m playwright install --with-deps chromium \
+    && chmod +x /entrypoint.sh
 
 EXPOSE 8765
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["sjtu-agent", "mcp", "--http", "--host", "0.0.0.0", "--port", "8765"]
