@@ -4,6 +4,7 @@ agent_config.json
 __pycache__/
 *.pyc
 .venv/
+.pytest_cache/
 _debug_*.py
 .DS_Store
 .claude/
@@ -17,6 +18,7 @@ remind_state.json
 care_state.json
 user_profile.json
 .ddl_cache.json
+campus_sites.json
 
 # Local notes / unrelated articles dropped into the repo
 *.html

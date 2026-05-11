@@ -28,7 +28,12 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
-from sjtu_agent.paths import CONFIG_PATH, ENV_PATH, SCHEDULE_CACHE_PATH as _SCHEDULE_CACHE_PATH
+from sjtu_agent.paths import (
+    CAMPUS_SITES_PATH,
+    CONFIG_PATH,
+    ENV_PATH,
+    SCHEDULE_CACHE_PATH as _SCHEDULE_CACHE_PATH,
+)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -1954,6 +1959,151 @@ def _search_dyweb(cfg: dict, query: str, max_results: int = 6,
     return results
 
 
+_BUILTIN_CAMPUS_SITES = {
+    "jwc": {"id": "jwc", "name": "教务处通知公告", "kind": "builtin", "url": "https://jwc.sjtu.edu.cn/"},
+    "shuiyuan": {"id": "shuiyuan", "name": "水源社区", "kind": "builtin", "url": "https://shuiyuan.sjtu.edu.cn/"},
+    "dyweb": {"id": "dyweb", "name": "传承·交大课程资料", "kind": "builtin", "url": "https://share.dyweb.sjtu.cn/"},
+}
+
+
+def _load_custom_campus_sites() -> dict[str, dict]:
+    if not CAMPUS_SITES_PATH.exists():
+        return {}
+    try:
+        raw = json.loads(CAMPUS_SITES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if isinstance(raw, list):
+        raw = {item.get("id", ""): item for item in raw if isinstance(item, dict)}
+    if not isinstance(raw, dict):
+        return {}
+    sites: dict[str, dict] = {}
+    for site_id, site in raw.items():
+        if not isinstance(site, dict):
+            continue
+        site_id = str(site.get("id") or site_id).strip().lower()
+        if not site_id:
+            continue
+        sites[site_id] = {
+            "id": site_id,
+            "name": str(site.get("name") or site_id).strip(),
+            "kind": str(site.get("kind") or "html").strip().lower(),
+            "url": str(site.get("url") or "").strip(),
+            "search_url": str(site.get("search_url") or "").strip(),
+        }
+    return sites
+
+
+def _save_custom_campus_sites(sites: dict[str, dict]) -> None:
+    CAMPUS_SITES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CAMPUS_SITES_PATH.write_text(json.dumps(sites, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def list_campus_sites() -> dict:
+    return {
+        "builtin": list(_BUILTIN_CAMPUS_SITES.values()),
+        "custom": list(_load_custom_campus_sites().values()),
+        "config_path": str(CAMPUS_SITES_PATH),
+    }
+
+
+def add_campus_site(
+    site_id: str,
+    name: str,
+    url: str,
+    kind: str = "html",
+    search_url: str = "",
+) -> dict:
+    site_id = site_id.strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{1,40}", site_id):
+        return {"error": "site_id must match [a-z0-9][a-z0-9_-]{1,40}"}
+    if site_id in _BUILTIN_CAMPUS_SITES:
+        return {"error": f"{site_id} is a built-in site and cannot be overwritten"}
+    kind = (kind or "html").strip().lower()
+    if kind not in {"html", "rss"}:
+        return {"error": "kind must be html or rss"}
+    if not url.startswith(("http://", "https://")):
+        return {"error": "url must start with http:// or https://"}
+    if search_url and not search_url.startswith(("http://", "https://")):
+        return {"error": "search_url must start with http:// or https://"}
+    sites = _load_custom_campus_sites()
+    sites[site_id] = {
+        "id": site_id,
+        "name": name.strip() or site_id,
+        "kind": kind,
+        "url": url.strip(),
+        "search_url": search_url.strip(),
+    }
+    _save_custom_campus_sites(sites)
+    return {"ok": True, "site": sites[site_id], "config_path": str(CAMPUS_SITES_PATH)}
+
+
+def remove_campus_site(site_id: str) -> dict:
+    site_id = site_id.strip().lower()
+    sites = _load_custom_campus_sites()
+    if site_id not in sites:
+        return {"error": f"custom site not found: {site_id}"}
+    removed = sites.pop(site_id)
+    _save_custom_campus_sites(sites)
+    return {"ok": True, "removed": removed}
+
+
+def _search_rss_url(url: str, query: str, max_results: int = 6) -> list[dict]:
+    import xml.etree.ElementTree as ET
+
+    r = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    root = ET.fromstring(r.content)
+    query_l = query.lower()
+    results: list[dict] = []
+    for item in root.findall(".//item"):
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        desc = re.sub(r"<.*?>", "", item.findtext("description") or "").strip()
+        date = (item.findtext("pubDate") or item.findtext("date") or "").strip()
+        if query_l and query_l not in f"{title} {desc}".lower():
+            continue
+        results.append({"title": title, "summary": desc[:300], "url": link, "date": date})
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _search_html_site(site: dict, query: str, max_results: int = 6) -> list[dict]:
+    template = site.get("search_url") or site.get("url", "")
+    search_url = template.format(query=urllib.parse.quote_plus(query), query_raw=query) if "{query" in template else template
+    r = requests.get(search_url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "lxml")
+    query_l = query.lower()
+    results: list[dict] = []
+    seen: set[str] = set()
+    for link in soup.find_all("a", href=True):
+        title = " ".join(link.get_text(" ", strip=True).split())
+        if not title:
+            continue
+        parent_text = " ".join(link.parent.get_text(" ", strip=True).split()) if link.parent else title
+        if query_l and query_l not in f"{title} {parent_text}".lower() and "{query" not in template:
+            continue
+        url = urllib.parse.urljoin(search_url, link["href"])
+        if url in seen:
+            continue
+        seen.add(url)
+        results.append({"title": title[:120], "summary": parent_text[:300], "url": url, "source": site.get("name")})
+        if len(results) >= max_results:
+            break
+    return results
+
+
+def _search_custom_site(site: dict, query: str, max_results: int = 6) -> list[dict]:
+    try:
+        if site.get("kind") == "rss":
+            return _search_rss_url(site.get("search_url") or site.get("url", ""), query, max_results)
+        return _search_html_site(site, query, max_results)
+    except Exception as exc:
+        return [{"error": str(exc), "site": site.get("id"), "name": site.get("name")}]
+
+
 def search_campus(
     cfg: dict,
     query: str,
@@ -1962,11 +2112,12 @@ def search_campus(
 ) -> dict:
     """在交大校园相关网站搜索内容。
 
-    sites 可选值：'jwc'（教务处通知）、'shuiyuan'（水源社区）、'dyweb'（传承·交大资料）
-    默认三者都搜。
+    内置站点：jwc（教务处通知）、shuiyuan（水源社区）、dyweb（传承·交大资料）。
+    也可以通过 campus_sites.json / add_campus_site 增加自定义 html/rss 站点。
     """
+    custom_sites = _load_custom_campus_sites()
     if sites is None:
-        sites = ["jwc", "shuiyuan", "dyweb"]
+        sites = ["jwc", "shuiyuan", "dyweb", *custom_sites.keys()]
     out: dict = {}
     if "jwc" in sites:
         print(f"[搜索] 教务处通知：{query}…")
@@ -1977,6 +2128,15 @@ def search_campus(
     if "dyweb" in sites:
         print(f"[搜索] 传承·交大：{query}…")
         out["dyweb"] = _search_dyweb(cfg, query, max_results)
+    for site_id in sites:
+        if site_id in _BUILTIN_CAMPUS_SITES:
+            continue
+        site = custom_sites.get(site_id)
+        if not site:
+            out[site_id] = [{"error": f"unknown campus site: {site_id}"}]
+            continue
+        print(f"[搜索] {site.get('name') or site_id}：{query}…")
+        out[site_id] = _search_custom_site(site, query, max_results)
     return out
 
 

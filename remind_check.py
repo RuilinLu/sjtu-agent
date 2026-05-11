@@ -193,7 +193,7 @@ def _check_deadline_guard(state: dict, test_mode: bool = False) -> bool:
 
 
 def _send_notification(title: str, subtitle: str, body: str) -> None:
-    """同时推送系统通知 + Telegram 消息（若已配置）。支持 macOS / Windows / Linux。"""
+    """推送系统通知 + OpenClaw/Telegram 消息（若已配置）。支持 macOS / Windows / Linux。"""
     # ── 跨平台系统通知 ────────────────────────────────────────────────────
     message = f"{subtitle}\n{body}" if body else subtitle
     try:
@@ -236,6 +236,15 @@ def _send_notification(title: str, subtitle: str, body: str) -> None:
                                check=True, capture_output=True, timeout=5)
         except Exception as e:
             _log(f"系统通知发送失败: {e}")
+
+    # ── OpenClaw / ClawBot 推送（若 OPENCLAW_PUSH_URL 已配置）──────────────
+    try:
+        from sjtu_agent.push.openclaw import push_reminder
+
+        if push_reminder(title, subtitle, body):
+            _log("OpenClaw 推送成功")
+    except Exception as e:
+        _log(f"OpenClaw 推送失败: {e}")
 
     # ── Telegram 推送 ─────────────────────────────────────────────────────
     try:

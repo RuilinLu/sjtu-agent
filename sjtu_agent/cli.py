@@ -150,7 +150,16 @@ def _cmd_news_digest(args: argparse.Namespace) -> int:
 
 
 def _cmd_mcp(args: argparse.Namespace) -> int:
-    return _run_module("mcp_server", args.script_args)
+    script_args: list[str] = []
+    if getattr(args, "http", False):
+        script_args.append("--http")
+    host = getattr(args, "host", None)
+    if host:
+        script_args.extend(["--host", host])
+    port = getattr(args, "port", None)
+    if port:
+        script_args.extend(["--port", str(port)])
+    return _run_module("mcp_server", script_args)
 
 
 def _cmd_web(args: argparse.Namespace) -> int:
@@ -250,7 +259,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_passthrough_parser(subparsers, "telegram-bot", "start the Telegram bot", _cmd_telegram_bot)
     _add_passthrough_parser(subparsers, "remind-check", "run the reminder daemon once", _cmd_remind_check)
     _add_passthrough_parser(subparsers, "news-digest", "run the smart news digest (collect + rank + push)", _cmd_news_digest)
-    _add_passthrough_parser(subparsers, "mcp", "start the MCP server", _cmd_mcp)
+    mcp_parser = subparsers.add_parser("mcp", help="start the MCP server")
+    mcp_parser.add_argument("--http", action="store_true", help="serve MCP over HTTP/SSE")
+    mcp_parser.add_argument("--host", default="127.0.0.1", help="HTTP/SSE listen host")
+    mcp_parser.add_argument("--port", type=int, default=8765, help="HTTP/SSE listen port")
+    mcp_parser.set_defaults(func=_cmd_mcp)
     _add_passthrough_parser(subparsers, "wechat-bot", "start the WeChat ilink bot (long-polling)", _cmd_wechat_bot)
 
     web_parser = subparsers.add_parser("web", help="open the local web configuration UI in your browser")

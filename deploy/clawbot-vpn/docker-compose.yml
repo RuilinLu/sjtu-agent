@@ -1,0 +1,101 @@
+services:
+  openclaw:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: openclaw
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      SJTU_AGENT_MCP_URL: "http://sjtu-vpn:8765/sse"
+    depends_on:
+      sjtu-vpn:
+        condition: service_started
+    networks:
+      - sjtu_agent_net
+    profiles:
+      - openclaw
+
+  sjtu-vpn:
+    build:
+      context: ./vpn
+    container_name: sjtu-vpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    env_file:
+      - .env
+    environment:
+      SJTU_VPN_SERVER: ${SJTU_VPN_SERVER:-stuv4.vpn.sjtu.edu.cn}
+      SJTU_VPN_ID: ${SJTU_VPN_ID:-@stu.vpn.sjtu.edu.cn}
+      SJTU_VPN_RIGHTSUBNET: ${SJTU_VPN_RIGHTSUBNET:-0.0.0.0/0}
+      SJTU_VPN_LEFTAUTH: ${SJTU_VPN_LEFTAUTH:-eap-peap}
+      SJTU_VPN_RIGHTAUTH: ${SJTU_VPN_RIGHTAUTH:-pubkey}
+    networks:
+      - sjtu_agent_net
+    healthcheck:
+      test: ["CMD-SHELL", "ipsec status 2>/dev/null | grep -q ESTABLISHED"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  sjtu-agent:
+    build:
+      context: ../..
+      dockerfile: deploy/clawbot-vpn/sjtu-agent/Dockerfile
+    container_name: sjtu-agent
+    restart: unless-stopped
+    network_mode: "service:sjtu-vpn"
+    depends_on:
+      sjtu-vpn:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SJTU_AGENT_HOME: /data/sjtu-agent
+      ZHIYUAN_BASE_URL: ${ZHIYUAN_BASE_URL:-https://models.sjtu.edu.cn/api/v1}
+      ZHIYUAN_MODEL: ${ZHIYUAN_MODEL:-deepseek-chat}
+    volumes:
+      - /data/sjtu-agent:/data/sjtu-agent
+    command: ["sjtu-agent", "mcp", "--http", "--host", "0.0.0.0", "--port", "8765"]
+
+  sjtu-agent-reminders:
+    build:
+      context: ../..
+      dockerfile: deploy/clawbot-vpn/sjtu-agent/Dockerfile
+    container_name: sjtu-agent-reminders
+    restart: unless-stopped
+    network_mode: "service:sjtu-vpn"
+    depends_on:
+      sjtu-vpn:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SJTU_AGENT_HOME: /data/sjtu-agent
+    volumes:
+      - /data/sjtu-agent:/data/sjtu-agent
+    command: ["sh", "-c", "while true; do sjtu-agent remind-check; sleep ${REMIND_INTERVAL_SECONDS:-60}; done"]
+
+  sjtu-agent-daily-report:
+    build:
+      context: ../..
+      dockerfile: deploy/clawbot-vpn/sjtu-agent/Dockerfile
+    container_name: sjtu-agent-daily-report
+    restart: unless-stopped
+    network_mode: "service:sjtu-vpn"
+    depends_on:
+      sjtu-vpn:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      SJTU_AGENT_HOME: /data/sjtu-agent
+    volumes:
+      - /data/sjtu-agent:/data/sjtu-agent
+    command: ["sh", "-c", "while true; do if [ \"$(date +%H:%M)\" = \"${DAILY_REPORT_TIME:-08:00}\" ]; then sjtu-agent daily-report; sleep 70; fi; sleep 20; done"]
+
+networks:
+  sjtu_agent_net:
+    name: sjtu_agent_net

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-daily_report.py — 每日学习汇报，通过 Telegram 推送
+daily_report.py — 每日学习汇报，通过 OpenClaw/Telegram 推送
 
 内容：
   1. 📚 DDL 提醒（7天内截止的作业，重点标注今日截止）
@@ -30,6 +30,17 @@ import agent
 import ddl_checker as dc
 
 # ── Telegram 推送 ─────────────────────────────────────────────────────────────
+
+def _send_openclaw(text: str) -> None:
+    """通过 OpenClaw/ClawBot 推送（若 OPENCLAW_PUSH_URL 已配置）。"""
+    try:
+        from sjtu_agent.push.openclaw import push_text
+
+        if push_text(text, title="SJTU 每日汇报"):
+            print("[daily_report] OpenClaw 推送成功")
+    except Exception as e:
+        print(f"[daily_report] OpenClaw 推送失败: {e}")
+
 
 def _send_telegram(text: str) -> None:
     """向所有 allowed_ids 分块推送 Telegram 消息。"""
@@ -289,7 +300,7 @@ def _log(msg: str) -> None:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test", action="store_true", help="打印汇报但不发送 Telegram")
+    parser.add_argument("--test", action="store_true", help="打印汇报但不发送 OpenClaw/Telegram")
     args = parser.parse_args()
 
     _log("=== 每日汇报开始 ===")
@@ -301,6 +312,7 @@ if __name__ == "__main__":
             print("="*60)
             _log("测试模式，未发送")
         else:
+            _send_openclaw(report)
             _send_telegram(report)
             _log("✅ 汇报已发送")
     except Exception as e:

@@ -20,6 +20,7 @@ load_dotenv(ENV_PATH)
 
 _ZHIYUAN_BASE_URL_ENV  = "ZHIYUAN_BASE_URL"
 _ZHIYUAN_API_KEY_ENV   = "ZHIYUAN_API_KEY"
+_ZHIYUAN_MODEL_ENV     = "ZHIYUAN_MODEL"
 _ZHIYUAN_DEFAULT_BASE  = "https://models.sjtu.edu.cn/api/v1"
 _ZHIYUAN_DEFAULT_MODEL = "deepseek-chat"
 
@@ -141,11 +142,12 @@ def load_agent_config() -> dict:
     # 2. fallback：致远一号环境变量
     zhiyuan_base = os.environ.get(_ZHIYUAN_BASE_URL_ENV, "").strip()
     zhiyuan_key  = os.environ.get(_ZHIYUAN_API_KEY_ENV, "").strip()
+    zhiyuan_model = os.environ.get(_ZHIYUAN_MODEL_ENV, "").strip()
     if zhiyuan_key:
         return {
             "base_url": zhiyuan_base or _ZHIYUAN_DEFAULT_BASE,
             "api_key":  zhiyuan_key,
-            "model":    _ZHIYUAN_DEFAULT_MODEL,
+            "model":    zhiyuan_model or _ZHIYUAN_DEFAULT_MODEL,
             "_source":  "zhiyuan_env",
         }
     return {}

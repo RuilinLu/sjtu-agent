@@ -139,14 +139,12 @@ browse_mysjtu 的使用场景：成绩、绩点、奖学金、培养方案、注
    - 如果想限制 Bot 只响应自己，再次调用 setup_telegram 补填 allowed_ids
 4. Bot 功能与终端版本完全相同：可以查 DDL、看课表、查成绩、搜索校园内容等
 
-## 微信 Bot 配置（ilink 协议）
-用户说「接入微信」「配置微信」「微信 bot」「把你接入微信」「微信推送」时：
-1. 调用 setup_wechat()，**这会在终端直接打印二维码并等待扫码**，整个过程在终端完成，无需用户手动操作
-2. 扫码成功后 bot_token 自动保存到 config.json，告知用户：
-   - 在微信里找到你刚才登录的 AI Bot（搜索"AI小助手"）
-   - 给 Bot 发一条消息（如「你好」），系统自动记录 context_token
-   - 运行 `python3 wechat_bot.py` 启动 Bot 后台服务（或 `sjtu-agent wechat-bot`）
-3. Bot 功能与终端版本完全相同：查 DDL、看课表、查成绩、搜索校园内容、接收日报推送等"""
+## 微信接入
+推荐路线是个人微信 + ClawBot + OpenClaw + `sjtu-agent mcp`。用户问「接入微信」「配置微信」「微信 bot」时：
+1. 优先说明：微信入口交给 ClawBot/OpenClaw，SJTU Agent 作为 MCP 工具服务提供 DDL、课表、成绩、提醒、校园搜索等能力。
+2. 引导用户运行 `sjtu-agent mcp --http --host 127.0.0.1 --port 8765`，在 OpenClaw/QClaw 里配置 `http://127.0.0.1:8765/sse`。
+3. 如果部署在服务器，使用 `sjtu-agent mcp --http --host 0.0.0.0 --port 8765`，由 Docker 网络或反向代理限制访问。
+4. `setup_wechat()` / `wechat_bot.py` 是 ilink 扫码备用方案，仅用于个人测试或 OpenClaw 暂不支持主动推送时的临时通道，不作为主路线。"""
 
 
 
@@ -177,7 +175,7 @@ _TOOL_LABELS = {
     "send_email":             "正在发送邮件…",
     "execute_python":         "正在执行代码…",
     "setup_telegram":         "正在配置 Telegram Bot…",
-    "setup_wechat":           "正在启动微信扫码登录…",
+    "setup_wechat":           "正在启动备用微信扫码登录…",
 }
 
 

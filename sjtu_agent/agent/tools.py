@@ -312,7 +312,8 @@ TOOLS = [
             "name": "search_campus",
             "description": (
                 "搜索交大校园相关网站的内容。"
-                "支持：jwc（教务处通知公告）、shuiyuan（水源社区论坛帖子）、dyweb（传承·交大课程资料）。"
+                "内置支持：jwc（教务处通知公告）、shuiyuan（水源社区论坛帖子）、dyweb（传承·交大课程资料）。"
+                "还支持用户通过 list_campus_sites/add_campus_site 增加的自定义 html/rss 站点。"
                 "重要：若用户明确指定了某个网站（如'水源'、'教务处'、'传承'），"
                 "必须在 sites 中只填该网站，不得多填其他网站。"
                 "只有用户未指定网站时才搜全部。"
@@ -326,12 +327,13 @@ TOOLS = [
                     },
                     "sites": {
                         "type": "array",
-                        "items": {"type": "string", "enum": ["jwc", "shuiyuan", "dyweb"]},
+                        "items": {"type": "string"},
                         "description": (
                             "要搜索的网站。"
                             "用户说'水源/水源社区/bbs'→必须只填[\"shuiyuan\"]；"
                             "用户说'教务处/jwc'→必须只填[\"jwc\"]；"
                             "用户说'传承/dyweb'→必须只填[\"dyweb\"]；"
+                            "用户指定了通过 add_campus_site 新增的站点时，填对应 site_id；"
                             "用户未指定平台→不传此参数，搜全部。"
                             "绝对不能在用户只要水源时多加jwc或dyweb。"
                         ),
@@ -342,6 +344,50 @@ TOOLS = [
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_campus_sites",
+            "description": "列出当前可搜索的内置与自定义校园网站，以及自定义配置文件路径。",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_campus_site",
+            "description": (
+                "新增一个可搜索的校园网站，后续 search_campus 可用它的 site_id 搜索。"
+                "kind='html' 会抓取搜索页/首页链接，kind='rss' 会解析 RSS/Atom。"
+                "search_url 可包含 {query} 作为 URL 编码后的关键词。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "site_id": {"type": "string", "description": "短 ID，如 seiee_news"},
+                    "name": {"type": "string", "description": "网站显示名"},
+                    "url": {"type": "string", "description": "网站首页或 RSS 地址"},
+                    "kind": {"type": "string", "enum": ["html", "rss"], "description": "站点类型"},
+                    "search_url": {"type": "string", "description": "可选搜索 URL 模板，支持 {query}"},
+                },
+                "required": ["site_id", "name", "url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_campus_site",
+            "description": "删除一个自定义校园搜索站点。内置站点不能删除。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "site_id": {"type": "string", "description": "要删除的自定义站点 ID"},
+                },
+                "required": ["site_id"],
             },
         },
     },
@@ -609,10 +655,10 @@ TOOLS = [
         "function": {
             "name": "setup_wechat",
             "description": (
-                "配置微信 ilink Bot：打印登录二维码，让用户扫码完成微信接入，"
+                "备用微信 ilink Bot 配置：打印登录二维码，让用户扫码完成个人测试接入，"
                 "bot_token 自动保存到 config.json。"
-                "用户说「接入微信」「配置微信」「微信 bot」「微信推送」时调用。"
-                "注意：扫码登录必须在终端完成，此工具会打印二维码并等待用户扫码确认。"
+                "主路线应使用 ClawBot + OpenClaw + sjtu-agent MCP；"
+                "只有用户明确要求使用备用 ilink 扫码方案或临时微信推送时才调用。"
             ),
             "parameters": {
                 "type": "object",
@@ -1974,6 +2020,24 @@ def tool_search_campus(
 ) -> dict:
     cfg = dc.load_config()
     return dc.search_campus(cfg, query, sites=sites, max_results=max_results)
+
+
+def tool_list_campus_sites() -> dict:
+    return dc.list_campus_sites()
+
+
+def tool_add_campus_site(
+    site_id: str,
+    name: str,
+    url: str,
+    kind: str = "html",
+    search_url: str = "",
+) -> dict:
+    return dc.add_campus_site(site_id=site_id, name=name, url=url, kind=kind, search_url=search_url)
+
+
+def tool_remove_campus_site(site_id: str) -> dict:
+    return dc.remove_campus_site(site_id)
 
 
 def tool_get_schedule(
@@ -3460,6 +3524,9 @@ def run_tool(name: str, args: dict) -> str:
         elif name == "list_assignment_files": r = tool_list_assignment_files(**args)
         elif name == "read_assignment_file":  r = tool_read_assignment_file(**args)
         elif name == "search_campus":         r = tool_search_campus(**args)
+        elif name == "list_campus_sites":     r = tool_list_campus_sites()
+        elif name == "add_campus_site":       r = tool_add_campus_site(**args)
+        elif name == "remove_campus_site":    r = tool_remove_campus_site(**args)
         elif name == "get_schedule":          r = tool_get_schedule(**args)
         elif name == "setup_shuiyuan":        r = tool_setup_shuiyuan()
         elif name == "browse_mysjtu":         r = tool_browse_mysjtu(**args)

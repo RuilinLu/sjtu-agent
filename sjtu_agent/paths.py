@@ -42,6 +42,7 @@ USER_PROFILE_PATH     = DATA_DIR / "user_profile.json"
 CARE_STATE_PATH       = DATA_DIR / "care_state.json"
 NEWS_HISTORY_PATH     = DATA_DIR / "news_history.json"
 CONVERSATION_LOG_PATH = DATA_DIR / "conversation_log.jsonl"
+CAMPUS_SITES_PATH     = DATA_DIR / "campus_sites.json"
 
 
 def atomic_write_json(path: Path, data, *, indent: int = 2) -> None:
@@ -137,6 +138,7 @@ def describe_runtime_paths() -> dict[str, str]:
         "reminders_path": str(REMINDERS_PATH),
         "mysjtu_catalog_path": str(MYSJTU_CATALOG_PATH),
         "schedule_cache_path": str(SCHEDULE_CACHE_PATH),
+        "campus_sites_path": str(CAMPUS_SITES_PATH),
     }
 
 

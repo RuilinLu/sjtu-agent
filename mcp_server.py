@@ -1,176 +1,275 @@
 #!/usr/bin/env python3
 """
-SJTU DDL Checker MCP Server
+SJTU Agent MCP Server
 
-暴露三个工具供 AI Agent 调用：
-  - get_ddls       : 获取所有平台未完成的 DDL 列表
-  - get_next_lab   : 获取下一次物理实验安排
-  - get_all        : 同时获取 DDL 和实验安排（汇总）
+This server is the recommended integration point for ClawBot/OpenClaw. WeChat
+transport and conversation orchestration stay in ClawBot/OpenClaw; this process
+only exposes stable SJTU campus tools through MCP.
 
-启动方式：
-  stdio 模式（Claude Desktop）：
-    python3 mcp_server.py
+Typical local run:
+  sjtu-agent mcp --http --host 127.0.0.1 --port 8765
 
-  HTTP/SSE 模式（ChatGPT Desktop，端口默认 8765）：
-    python3 mcp_server.py --http [--port 8765]
-
-Claude Desktop 配置 (~/.claude_desktop_config.json)：
-  {
-    "mcpServers": {
-      "sjtu-ddl": {
-        "command": "python3",
-        "args": ["/path/to/sjtu-agent/mcp_server.py"]
-      }
-    }
-  }
-
-ChatGPT Desktop：
-  1. 先在终端运行：python3 mcp_server.py --http
-  2. 在 ChatGPT Settings → Connectors/Apps 添加 URL：
-     http://localhost:8765/sse
+Typical Docker run:
+  sjtu-agent mcp --http --host 0.0.0.0 --port 8765
 """
 
+from __future__ import annotations
+
+import argparse
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
-# 确保能 import 同目录下的 ddl_checker
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp.server.fastmcp import FastMCP
-import ddl_checker as dc
 
-mcp = FastMCP("sjtu-ddl")
+from sjtu_agent.agent.tools import run_tool
 
-
-def _serialize_ddl(item: dict) -> dict:
-    """将 DDL 条目序列化为 JSON 安全的 dict。"""
-    return {
-        "platform": item["platform"],
-        "course":   item["course"],
-        "name":     item["name"],
-        "due":      item["due"].isoformat(),
-        "days_left": (item["due"] - dc.NOW).days,
-        "submitted": item.get("submitted", False),
-    }
+try:
+    import ddl_checker as dc
+except Exception as exc:  # pragma: no cover - setup errors surface through tools
+    dc = None
+    _DDL_IMPORT_ERROR = exc
+else:
+    _DDL_IMPORT_ERROR = None
 
 
-def _serialize_lab(lab: dict | None) -> dict | None:
-    if not lab:
-        return None
-    dt = lab["dt"]
-    return {
-        "name":     lab["name"],
-        "datetime": dt.isoformat(),
-        "weekday":  dc.WEEKDAY_ZH[dt.weekday()],
-        "time_str": lab["time_str"],
-        "room":     lab["room"],
-    }
+mcp = FastMCP("sjtu-agent")
+
+
+def _json_result(tool_name: str, args: dict[str, Any] | None = None) -> str:
+    """Run a built-in SJTU Agent tool and return compact JSON text."""
+
+    return run_tool(tool_name, args or {})
+
+
+def _dc_result(func_name: str, *args: Any, **kwargs: Any) -> str:
+    """Run a ddl_checker helper and return JSON text."""
+
+    if dc is None:
+        return json.dumps({"error": f"ddl_checker import failed: {_DDL_IMPORT_ERROR}"}, ensure_ascii=False)
+    try:
+        result = getattr(dc, func_name)(*args, **kwargs)
+    except Exception as exc:
+        result = {"error": str(exc)}
+    return json.dumps(result, ensure_ascii=False)
+
+
+@mcp.tool()
+def check_setup() -> str:
+    """Check whether SJTU credentials, Canvas token, and LLM config are present."""
+
+    return _json_result("check_setup")
 
 
 @mcp.tool()
 def get_ddls(
-    skip_canvas:  bool = False,
+    skip_canvas: bool = False,
     skip_aihaoke: bool = False,
     skip_icourse: bool = False,
-) -> list[dict]:
-    """
-    获取所有平台未完成的 DDL 列表，按截止时间升序排列。
+) -> str:
+    """Get unfinished Canvas / AI haoke / iCourse DDLs sorted by due time."""
 
-    参数：
-      skip_canvas   : 跳过 Canvas
-      skip_aihaoke  : 跳过 aihaoke
-      skip_icourse  : 跳过中国大学 MOOC (icourse163)
-
-    返回每条 DDL 的字段：
-      platform  : 平台名 (canvas / aihaoke / icourse163)
-      course    : 课程名称
-      name      : 作业/测验名称
-      due       : 截止时间 (ISO 8601)
-      days_left : 距截止还有几天（负数表示已过期）
-      submitted : 是否已提交
-    """
-    cfg = dc.load_config()
-    all_ddl: list[dict] = []
-
-    if not skip_canvas:
-        all_ddl.extend(dc.fetch_canvas(cfg))
-    if not skip_aihaoke:
-        all_ddl.extend(dc.fetch_aihaoke(cfg))
-    if not skip_icourse:
-        all_ddl.extend(dc.fetch_icourse(cfg))
-
-    all_ddl.sort(key=lambda x: x["due"])
-    pending = [x for x in all_ddl if not x.get("submitted")]
-    return [_serialize_ddl(x) for x in pending]
+    return _json_result(
+        "get_ddls",
+        {
+            "skip_canvas": skip_canvas,
+            "skip_aihaoke": skip_aihaoke,
+            "skip_icourse": skip_icourse,
+        },
+    )
 
 
 @mcp.tool()
-def get_next_lab() -> dict | None:
-    """
-    获取下一次物理实验安排。
+def get_next_lab() -> str:
+    """Get the next physics lab arrangement."""
 
-    返回字段：
-      name      : 实验项目名称
-      datetime  : 实验时间 (ISO 8601)
-      weekday   : 星期几（中文）
-      time_str  : 时间字符串（如 "星期一18:00"）
-      room      : 实验地点
-
-    若无法获取则返回 null。
-    """
-    cfg = dc.load_config()
-    lab = dc.fetch_phycai(cfg)
-    return _serialize_lab(lab)
+    return _json_result("get_next_lab")
 
 
 @mcp.tool()
 def get_all(
-    skip_canvas:  bool = False,
+    skip_canvas: bool = False,
     skip_aihaoke: bool = False,
     skip_icourse: bool = False,
-    skip_phycai:  bool = False,
-) -> dict:
+    skip_phycai: bool = False,
+) -> str:
+    """Get DDLs and the next physics lab in one call."""
+
+    return _json_result(
+        "get_all",
+        {
+            "skip_canvas": skip_canvas,
+            "skip_aihaoke": skip_aihaoke,
+            "skip_icourse": skip_icourse,
+            "skip_phycai": skip_phycai,
+        },
+    )
+
+
+@mcp.tool()
+def get_schedule(
+    query_type: str = "day",
+    date: str = "",
+    week_offset: int = 0,
+    set_semester_start: str = "",
+    refresh: bool = False,
+) -> str:
+    """Query today's, tomorrow's, a specific day's, or a week's class schedule."""
+
+    return _json_result(
+        "get_schedule",
+        {
+            "query_type": query_type,
+            "date": date,
+            "week_offset": week_offset,
+            "set_semester_start": set_semester_start,
+            "refresh": refresh,
+        },
+    )
+
+
+@mcp.tool()
+def query_grades(year: str = "", semester: str = "") -> str:
+    """Query grades and GPA from i.sjtu.edu.cn."""
+
+    return _json_result("query_grades", {"year": year, "semester": semester})
+
+
+@mcp.tool()
+def add_reminder(title: str, start: str, end: str = "", note: str = "") -> str:
+    """Add a local reminder. Use 'YYYY-MM-DD HH:MM' for start/end when possible."""
+
+    return _json_result("add_reminder", {"title": title, "start": start, "end": end, "note": note})
+
+
+@mcp.tool()
+def list_reminders() -> str:
+    """List active and expired local reminders."""
+
+    return _json_result("list_reminders")
+
+
+@mcp.tool()
+def remove_reminder(reminder_id: int) -> str:
+    """Remove a reminder by id."""
+
+    return _json_result("remove_reminder", {"reminder_id": reminder_id})
+
+
+@mcp.tool()
+def search_campus(query: str, sites: list[str] | None = None, max_results: int = 6) -> str:
+    """Search built-in and user-configured SJTU/campus-related sites."""
+
+    args: dict[str, Any] = {"query": query, "max_results": max_results}
+    if sites:
+        args["sites"] = sites
+    return _json_result("search_campus", args)
+
+
+@mcp.tool()
+def list_campus_sites() -> str:
+    """List built-in and custom campus search sites."""
+
+    return _dc_result("list_campus_sites")
+
+
+@mcp.tool()
+def add_campus_site(
+    site_id: str,
+    name: str,
+    url: str,
+    kind: str = "html",
+    search_url: str = "",
+) -> str:
+    """Add a custom searchable campus site.
+
+    kind supports:
+      - html: fetch search_url or url and collect matching links
+      - rss: parse RSS/Atom feed items
+
+    search_url may contain {query} for URL-encoded query text and {query_raw}
+    for raw text. Example: https://example.sjtu.edu.cn/search?q={query}
     """
-    一次性获取所有 DDL 和物理实验安排。
 
-    返回：
-      ddls : DDL 列表（同 get_ddls 格式）
-      lab  : 下一次物理实验（同 get_next_lab 格式，无则为 null）
-    """
-    cfg = dc.load_config()
-    all_ddl: list[dict] = []
-
-    if not skip_canvas:
-        all_ddl.extend(dc.fetch_canvas(cfg))
-    if not skip_aihaoke:
-        all_ddl.extend(dc.fetch_aihaoke(cfg))
-    if not skip_icourse:
-        all_ddl.extend(dc.fetch_icourse(cfg))
-
-    all_ddl.sort(key=lambda x: x["due"])
-    pending = [x for x in all_ddl if not x.get("submitted")]
-
-    lab = None
-    if not skip_phycai:
-        lab = dc.fetch_phycai(cfg)
-
-    return {
-        "ddls": [_serialize_ddl(x) for x in pending],
-        "lab":  _serialize_lab(lab),
-    }
+    return _dc_result(
+        "add_campus_site",
+        site_id=site_id,
+        name=name,
+        url=url,
+        kind=kind,
+        search_url=search_url,
+    )
 
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--http", action="store_true", help="以 HTTP/SSE 模式启动（供 ChatGPT Desktop 使用）")
-    parser.add_argument("--port", type=int, default=8765, help="HTTP 模式端口（默认 8765）")
-    args = parser.parse_args()
+@mcp.tool()
+def remove_campus_site(site_id: str) -> str:
+    """Remove a custom campus site by id."""
+
+    return _dc_result("remove_campus_site", site_id=site_id)
+
+
+@mcp.tool()
+def download_assignments(
+    skip_canvas: bool = False,
+    skip_aihaoke: bool = False,
+    course_filter: str = "",
+    assignment_filter: str = "",
+    due_within_days: int = 7,
+    output_dir: str = "./assignments",
+) -> str:
+    """Download recent assignment descriptions and attachments."""
+
+    return _json_result(
+        "download_assignments",
+        {
+            "skip_canvas": skip_canvas,
+            "skip_aihaoke": skip_aihaoke,
+            "course_filter": course_filter,
+            "assignment_filter": assignment_filter,
+            "due_within_days": due_within_days,
+            "output_dir": output_dir,
+        },
+    )
+
+
+@mcp.tool()
+def list_assignment_files(course_filter: str = "", assignments_dir: str = "./assignments") -> str:
+    """List downloaded assignment files."""
+
+    return _json_result(
+        "list_assignment_files",
+        {"course_filter": course_filter, "assignments_dir": assignments_dir},
+    )
+
+
+@mcp.tool()
+def read_assignment_file(file_path: str, max_chars: int = 8000, start_page: int = 1) -> str:
+    """Read text from a downloaded assignment PDF or HTML file."""
+
+    return _json_result(
+        "read_assignment_file",
+        {"file_path": file_path, "max_chars": max_chars, "start_page": start_page},
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Run the SJTU Agent MCP server.")
+    parser.add_argument("--http", action="store_true", help="serve MCP over HTTP/SSE")
+    parser.add_argument("--host", default="127.0.0.1", help="HTTP/SSE listen host")
+    parser.add_argument("--port", type=int, default=8765, help="HTTP/SSE listen port")
+    args = parser.parse_args(argv)
 
     if args.http:
-        print(f"启动 HTTP/SSE 模式，监听 http://localhost:{args.port}/sse")
+        print(f"Starting SJTU Agent MCP over HTTP/SSE at http://{args.host}:{args.port}/sse")
+        mcp.settings.host = args.host
         mcp.settings.port = args.port
-        mcp.settings.host = "127.0.0.1"
         mcp.run(transport="sse")
     else:
         mcp.run()
+
+
+if __name__ == "__main__":
+    main()
