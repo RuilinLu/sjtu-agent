@@ -3,7 +3,8 @@ set -eu
 
 : "${SJTU_VPN_SERVER:=stuv4.vpn.sjtu.edu.cn}"
 : "${SJTU_VPN_ID:=@stu.vpn.sjtu.edu.cn}"
-: "${SJTU_VPN_RIGHTSUBNET:=0.0.0.0/0}"
+: "${SJTU_VPN_RIGHTSUBNET:=0.0.0.0/0,2000::/3}"
+: "${SJTU_VPN_LEFTSOURCEIP:=%%config4,%%config6}"
 : "${SJTU_VPN_AAA_IDENTITY:=@radius.net.sjtu.edu.cn}"
 : "${SJTU_VPN_LEFTAUTH:=eap-peap}"
 : "${SJTU_VPN_RIGHTAUTH:=pubkey}"
@@ -11,9 +12,14 @@ set -eu
 : "${SJTU_VPN_PASSWORD:?SJTU_VPN_PASSWORD is required}"
 
 mkdir -p /etc/ipsec.d/cacerts
-if [ -f /etc/ssl/certs/ISRG_Root_X1.pem ]; then
-    cp /etc/ssl/certs/ISRG_Root_X1.pem /etc/ipsec.d/cacerts/ISRG_Root_X1.pem
-fi
+rm -f /etc/ipsec.d/cacerts/*
+ln -s /etc/ssl/certs/* /etc/ipsec.d/cacerts/ 2>/dev/null || true
+mkdir -p /etc/strongswan.d/charon
+cat >/etc/strongswan.d/charon/revocation.conf <<EOF
+load = no
+EOF
+
+LEFTSOURCEIP=$(printf "%s" "${SJTU_VPN_LEFTSOURCEIP}" | sed "s/%%/%/g")
 
 cat >/etc/ipsec.conf <<EOF
 config setup
@@ -24,16 +30,17 @@ conn sjtu-student
     keyexchange=ikev2
     auto=start
     left=%config
-    leftsourceip=%config
+    leftsourceip=${LEFTSOURCEIP}
     leftauth=${SJTU_VPN_LEFTAUTH}
-    eap_identity=${SJTU_VPN_USER}
-    aaa_identity=${SJTU_VPN_AAA_IDENTITY}
+    eap_identity="${SJTU_VPN_USER}"
+    aaa_identity="${SJTU_VPN_AAA_IDENTITY}"
     right=${SJTU_VPN_SERVER}
     rightid=${SJTU_VPN_ID}
     rightsendcert=never
     rightauth=${SJTU_VPN_RIGHTAUTH}
     rightsubnet=${SJTU_VPN_RIGHTSUBNET}
     fragmentation=yes
+    mobike=no
     dpdaction=restart
     dpddelay=30s
     dpdtimeout=150s
