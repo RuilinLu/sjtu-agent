@@ -16,19 +16,26 @@ website/Caddy/Portainer stacks stay on the normal Hong Kong server network.
 
 ## Portainer
 
-1. Create a new stack named `sjtu-agent-vpn`.
-2. Use this directory as the compose path: `deploy/clawbot-vpn/docker-compose.yml`.
-3. Copy `.env.example` to `.env` in Portainer and fill the real values.
-   Replace `OPENCLAW_IMAGE` with the exact OpenClaw server/runtime image you use.
-4. Deploy the stack.
-5. In OpenClaw, configure the MCP SSE URL:
+1. Install OpenClaw on the host with the official installer. It runs on port
+   `18789` and does not need the SJTU VPN.
+2. Create a new stack named `sjtu-agent-vpn`.
+3. Use this directory as the compose path: `deploy/clawbot-vpn/docker-compose.yml`.
+4. Copy `.env.example` to `.env` in Portainer and fill the real values.
+5. Deploy the stack.
+6. In host-installed OpenClaw, configure the MCP SSE URL:
+
+```text
+http://127.0.0.1:8765/sse
+```
+
+If you instead run OpenClaw as a container in the same `sjtu_agent_net`, use:
 
 ```text
 http://sjtu-vpn:8765/sse
 ```
 
-If OpenClaw is not in this compose stack, connect it to the `sjtu_agent_net`
-Docker network or use an SSH tunnel during local debugging.
+The compose file publishes MCP only on `127.0.0.1:8765`, so the campus tools are
+not exposed to the public internet.
 
 ## Local Debug Tunnel
 

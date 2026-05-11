@@ -32,6 +32,8 @@ services:
       SJTU_VPN_RIGHTSUBNET: ${SJTU_VPN_RIGHTSUBNET:-0.0.0.0/0}
       SJTU_VPN_LEFTAUTH: ${SJTU_VPN_LEFTAUTH:-eap-peap}
       SJTU_VPN_RIGHTAUTH: ${SJTU_VPN_RIGHTAUTH:-pubkey}
+    ports:
+      - "127.0.0.1:8765:8765"
     networks:
       - sjtu_agent_net
     healthcheck:

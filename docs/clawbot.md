@@ -50,6 +50,26 @@ http://127.0.0.1:8765/sse
 
 ## 香港服务器长期运行
 
+OpenClaw 推荐按官方脚本安装在宿主机上：
+
+```bash
+curl -fsSL https://openclaw.ai/install.sh | bash
+openclaw onboard --install-daemon
+```
+
+它默认运行 Gateway 网关端口 `18789`，不需要进入 VPN 网络。为了让宿主机上的 OpenClaw 能调用 Docker 里的 SJTU Agent MCP，`deploy/clawbot-vpn/docker-compose.yml` 会把 MCP 端口只映射到本机：
+
+```yaml
+ports:
+  - "127.0.0.1:8765:8765"
+```
+
+所以宿主机 OpenClaw 的 MCP SSE URL 填：
+
+```text
+http://127.0.0.1:8765/sse
+```
+
 服务器建议使用新增 stack：
 
 ```text
@@ -68,7 +88,7 @@ sjtu-agent-vpn
 deploy/clawbot-vpn/.env.example -> .env
 ```
 
-其中 `OPENCLAW_IMAGE` 需要替换成你实际使用的 OpenClaw server/runtime 镜像；如果你暂时用本地 QClaw 调试，可以先不启用 compose 里的 `openclaw` profile。
+如果你使用官方脚本在宿主机安装 OpenClaw，可以不启用 compose 里的 `openclaw` profile；它只是给容器化 OpenClaw 预留的可选入口。
 
 关键变量：
 
@@ -82,7 +102,7 @@ ZHIYUAN_BASE_URL=https://models.sjtu.edu.cn/api/v1
 ZHIYUAN_MODEL=deepseek-chat
 ```
 
-OpenClaw 和 `sjtu-vpn` 在同一个 Docker 网络时，MCP URL 填：
+如果 OpenClaw 不是宿主机安装，而是作为容器加入同一个 Docker 网络，MCP URL 才填：
 
 ```text
 http://sjtu-vpn:8765/sse
