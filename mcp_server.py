@@ -16,6 +16,7 @@ Typical Docker run:
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sys
 from pathlib import Path
@@ -39,10 +40,17 @@ else:
 mcp = FastMCP("sjtu-agent")
 
 
+def _run_in_worker(func, *args: Any, **kwargs: Any) -> Any:
+    """Run sync tools outside FastMCP's asyncio loop."""
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(func, *args, **kwargs).result()
+
+
 def _json_result(tool_name: str, args: dict[str, Any] | None = None) -> str:
     """Run a built-in SJTU Agent tool and return compact JSON text."""
 
-    return run_tool(tool_name, args or {})
+    return _run_in_worker(run_tool, tool_name, args or {})
 
 
 def _dc_result(func_name: str, *args: Any, **kwargs: Any) -> str:
