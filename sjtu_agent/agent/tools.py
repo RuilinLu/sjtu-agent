@@ -3428,6 +3428,15 @@ def _canvas_local_time(value: str | None) -> str | None:
     return dt.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
 
 
+def _canvas_parse_time(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _canvas_clean_html(value: str | None) -> str:
     if not value:
         return ""
@@ -3449,14 +3458,47 @@ def _canvas_submission_status(submission: dict | None) -> str:
     return "unsubmitted"
 
 
-def _canvas_assignment_attention(status: str, due_at: str | None) -> str:
+def _canvas_assignment_availability(assignment: dict, now: datetime | None = None) -> dict:
+    now = now or datetime.now(timezone.utc)
+    unlock_at = assignment.get("unlock_at")
+    lock_at = assignment.get("lock_at")
+    unlock_dt = _canvas_parse_time(unlock_at)
+    lock_dt = _canvas_parse_time(lock_at)
+    locked_for_user = bool(assignment.get("locked_for_user"))
+
+    if unlock_dt and now < unlock_dt:
+        state = "not_yet_open"
+    elif lock_dt and now > lock_dt:
+        state = "locked"
+    elif locked_for_user:
+        state = "locked"
+    else:
+        state = "available"
+
+    return {
+        "state": state,
+        "unlock_at": unlock_at,
+        "unlock_at_local": _canvas_local_time(unlock_at),
+        "lock_at": lock_at,
+        "lock_at_local": _canvas_local_time(lock_at),
+        "locked_for_user": locked_for_user,
+        "lock_explanation": assignment.get("lock_explanation"),
+        "can_submit_now": state == "available",
+    }
+
+
+def _canvas_assignment_attention(status: str, assignment: dict, availability: dict) -> str:
     if status in {"submitted", "graded", "pending_review"}:
         return "done"
+    if availability.get("state") == "not_yet_open":
+        return "not_yet_open_unsubmitted"
+    if availability.get("state") == "locked":
+        return "locked_unsubmitted"
+    due_at = assignment.get("due_at")
     if not due_at:
         return "no_due_unsubmitted"
-    try:
-        due = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
-    except ValueError:
+    due = _canvas_parse_time(due_at)
+    if not due:
         return "unsubmitted"
     if due < datetime.now(timezone.utc):
         return "overdue_unsubmitted"
@@ -3523,6 +3565,8 @@ def tool_get_canvas_overview(
         "overdue_unsubmitted": 0,
         "upcoming_unsubmitted": 0,
         "no_due_unsubmitted": 0,
+        "locked_unsubmitted": 0,
+        "not_yet_open_unsubmitted": 0,
     }
 
     for course in courses:
@@ -3562,18 +3606,22 @@ def tool_get_canvas_overview(
                 continue
             submission = assignment.get("submission") if isinstance(assignment.get("submission"), dict) else {}
             status = _canvas_submission_status(submission)
-            attention = _canvas_assignment_attention(status, assignment.get("due_at"))
+            availability = _canvas_assignment_availability(assignment)
+            attention = _canvas_assignment_attention(status, assignment, availability)
             item = {
                 "assignment_id": assignment.get("id"),
                 "name": assignment.get("name"),
                 "due_at": assignment.get("due_at"),
                 "due_at_local": _canvas_local_time(assignment.get("due_at")),
                 "lock_at": assignment.get("lock_at"),
+                "lock_at_local": _canvas_local_time(assignment.get("lock_at")),
                 "unlock_at": assignment.get("unlock_at"),
+                "unlock_at_local": _canvas_local_time(assignment.get("unlock_at")),
                 "points_possible": assignment.get("points_possible"),
                 "grading_type": assignment.get("grading_type"),
                 "submission_types": assignment.get("submission_types", []),
                 "published": assignment.get("published"),
+                "availability": availability,
                 "url": assignment.get("html_url") or f"{course_url}/assignments/{assignment.get('id')}",
                 "submission": {
                     "workflow_state": status,
@@ -3611,6 +3659,11 @@ def tool_get_canvas_overview(
                     "name": item["name"],
                     "due_at": item["due_at"],
                     "due_at_local": item["due_at_local"],
+                    "unlock_at": item["unlock_at"],
+                    "unlock_at_local": item["unlock_at_local"],
+                    "lock_at": item["lock_at"],
+                    "lock_at_local": item["lock_at_local"],
+                    "availability": availability,
                     "status": status,
                     "attention": attention,
                     "url": item["url"],
@@ -3658,7 +3711,10 @@ def tool_get_canvas_overview(
 
     def _due_sort_key(item: dict) -> tuple[int, str]:
         due = item.get("due_at")
-        return (0 if due else 1, due or "")
+        lock_at = item.get("lock_at")
+        unlock_at = item.get("unlock_at")
+        primary = due or lock_at or unlock_at
+        return (0 if primary else 1, primary or "")
 
     needs_attention.sort(key=_due_sort_key)
     all_announcements.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
@@ -3673,6 +3729,7 @@ def tool_get_canvas_overview(
         "courses": overview_courses,
         "notes": [
             "Submission state is based on submission.workflow_state; Canvas submitted can be null.",
+            "Availability is based on unlock_at, lock_at, and locked_for_user; no-due assignments can still be locked.",
             "All course, assignment, and announcement items include Canvas URLs when available.",
         ],
     }
