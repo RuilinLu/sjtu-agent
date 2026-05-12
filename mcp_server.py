@@ -165,6 +165,30 @@ def get_all(
 
 
 @mcp.tool()
+def get_canvas_overview(
+    course_filter: str = "",
+    include_announcements: bool = True,
+    include_assignment_descriptions: bool = True,
+    include_html: bool = False,
+    max_courses: int = 30,
+    max_announcements_per_course: int = 20,
+) -> str:
+    """Get complete Canvas courses, assignments, submissions, announcements, and URLs."""
+
+    return _json_result(
+        "get_canvas_overview",
+        {
+            "course_filter": course_filter,
+            "include_announcements": include_announcements,
+            "include_assignment_descriptions": include_assignment_descriptions,
+            "include_html": include_html,
+            "max_courses": max_courses,
+            "max_announcements_per_course": max_announcements_per_course,
+        },
+    )
+
+
+@mcp.tool()
 def get_schedule(
     query_type: str = "day",
     date: str = "",

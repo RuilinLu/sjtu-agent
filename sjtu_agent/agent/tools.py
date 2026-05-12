@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import re
@@ -344,6 +345,29 @@ TOOLS = [
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_canvas_overview",
+            "description": (
+                "Return a comprehensive Canvas overview: active courses, all assignments, "
+                "submission workflow states, announcements, due dates, and clickable Canvas URLs. "
+                "Use this when the user asks for complete Canvas homework/notice information."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "course_filter": {"type": "string"},
+                    "include_announcements": {"type": "boolean"},
+                    "include_assignment_descriptions": {"type": "boolean"},
+                    "include_html": {"type": "boolean"},
+                    "max_courses": {"type": "integer"},
+                    "max_announcements_per_course": {"type": "integer"},
+                },
+                "required": [],
             },
         },
     },
@@ -3353,6 +3377,307 @@ def tool_download_assignments(
     }
 
 
+def _canvas_headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+
+
+def _canvas_get_all(
+    session: requests.Session,
+    base: str,
+    path: str,
+    token: str,
+    *,
+    params: list[tuple[str, object]] | dict[str, object] | None = None,
+    max_items: int = 500,
+    timeout: int = 30,
+) -> list:
+    """Fetch a Canvas list endpoint, following pagination links."""
+
+    url = f"{base.rstrip('/')}{path}"
+    items: list = []
+    next_params = params
+    while url and len(items) < max_items:
+        resp = session.get(
+            url,
+            headers=_canvas_headers(token),
+            params=next_params,
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Canvas GET {path} failed ({resp.status_code}): {resp.text[:300]}")
+        data = resp.json()
+        if isinstance(data, list):
+            items.extend(data)
+        else:
+            return [data]
+        url = resp.links.get("next", {}).get("url")
+        next_params = None
+    return items[:max_items]
+
+
+def _canvas_local_time(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    return dt.astimezone(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+
+
+def _canvas_clean_html(value: str | None) -> str:
+    if not value:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", value)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html.unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _canvas_submission_status(submission: dict | None) -> str:
+    sub = submission or {}
+    state = (sub.get("workflow_state") or "").strip()
+    if state:
+        return state
+    if sub.get("score") is not None or sub.get("grade") is not None:
+        return "graded"
+    if sub.get("submitted_at"):
+        return "submitted"
+    return "unsubmitted"
+
+
+def _canvas_assignment_attention(status: str, due_at: str | None) -> str:
+    if status in {"submitted", "graded", "pending_review"}:
+        return "done"
+    if not due_at:
+        return "no_due_unsubmitted"
+    try:
+        due = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
+    except ValueError:
+        return "unsubmitted"
+    if due < datetime.now(timezone.utc):
+        return "overdue_unsubmitted"
+    return "upcoming_unsubmitted"
+
+
+def tool_get_canvas_overview(
+    course_filter: str = "",
+    include_announcements: bool = True,
+    include_assignment_descriptions: bool = True,
+    include_html: bool = False,
+    max_courses: int = 30,
+    max_announcements_per_course: int = 20,
+) -> dict:
+    """Return complete actionable Canvas course, assignment, submission, and announcement data."""
+
+    cfg = dc.load_config()
+    base = cfg.get("canvas_base_url", _CANVAS_DEFAULT_BASE_URL).rstrip("/")
+    token = cfg.get("canvas_token", "").strip()
+    if not token:
+        return {
+            "error": "Canvas Token is not configured.",
+            "settings_url": _canvas_settings_url(base),
+            "next_action": "Generate a Canvas access token, then call save_credentials with canvas_token.",
+        }
+
+    session = requests.Session()
+    try:
+        raw_courses = _canvas_get_all(
+            session,
+            base,
+            "/api/v1/courses",
+            token,
+            params=[
+                ("per_page", 100),
+                ("include[]", "term"),
+                ("include[]", "total_scores"),
+                ("enrollment_state", "active"),
+            ],
+            max_items=500,
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    courses = [c for c in raw_courses if isinstance(c, dict) and c.get("id") and c.get("name")]
+    if course_filter:
+        courses = [
+            c for c in courses
+            if course_filter.lower() in c.get("name", "").lower()
+            or course_filter.lower() in c.get("course_code", "").lower()
+        ]
+    courses = courses[:max_courses]
+
+    overview_courses: list[dict] = []
+    needs_attention: list[dict] = []
+    all_announcements: list[dict] = []
+    totals = {
+        "courses": len(courses),
+        "assignments": 0,
+        "announcements": 0,
+        "graded": 0,
+        "submitted": 0,
+        "unsubmitted": 0,
+        "overdue_unsubmitted": 0,
+        "upcoming_unsubmitted": 0,
+        "no_due_unsubmitted": 0,
+    }
+
+    for course in courses:
+        cid = course["id"]
+        course_url = f"{base}/courses/{cid}"
+        cname = course.get("name", "")
+        course_item = {
+            "course_id": cid,
+            "course_name": cname,
+            "course_code": course.get("course_code"),
+            "term": (course.get("term") or {}).get("name"),
+            "workflow_state": course.get("workflow_state"),
+            "url": course_url,
+            "assignments": [],
+            "announcements": [],
+        }
+
+        try:
+            assignments = _canvas_get_all(
+                session,
+                base,
+                f"/api/v1/courses/{cid}/assignments",
+                token,
+                params=[
+                    ("per_page", 100),
+                    ("order_by", "due_at"),
+                    ("include[]", "submission"),
+                ],
+                max_items=300,
+            )
+        except Exception as exc:
+            course_item["assignments_error"] = str(exc)
+            assignments = []
+
+        for assignment in assignments:
+            if not isinstance(assignment, dict):
+                continue
+            submission = assignment.get("submission") if isinstance(assignment.get("submission"), dict) else {}
+            status = _canvas_submission_status(submission)
+            attention = _canvas_assignment_attention(status, assignment.get("due_at"))
+            item = {
+                "assignment_id": assignment.get("id"),
+                "name": assignment.get("name"),
+                "due_at": assignment.get("due_at"),
+                "due_at_local": _canvas_local_time(assignment.get("due_at")),
+                "lock_at": assignment.get("lock_at"),
+                "unlock_at": assignment.get("unlock_at"),
+                "points_possible": assignment.get("points_possible"),
+                "grading_type": assignment.get("grading_type"),
+                "submission_types": assignment.get("submission_types", []),
+                "published": assignment.get("published"),
+                "url": assignment.get("html_url") or f"{course_url}/assignments/{assignment.get('id')}",
+                "submission": {
+                    "workflow_state": status,
+                    "raw_workflow_state": submission.get("workflow_state"),
+                    "submitted_at": submission.get("submitted_at"),
+                    "submitted_at_local": _canvas_local_time(submission.get("submitted_at")),
+                    "score": submission.get("score"),
+                    "grade": submission.get("grade"),
+                    "late": submission.get("late"),
+                    "missing": submission.get("missing"),
+                    "attempt": submission.get("attempt"),
+                },
+                "attention": attention,
+            }
+            if include_assignment_descriptions:
+                item["description_text"] = _canvas_clean_html(assignment.get("description"))
+            if include_html:
+                item["description_html"] = assignment.get("description")
+            course_item["assignments"].append(item)
+
+            totals["assignments"] += 1
+            if status == "graded":
+                totals["graded"] += 1
+            elif status in {"submitted", "pending_review"}:
+                totals["submitted"] += 1
+            else:
+                totals["unsubmitted"] += 1
+            if attention in totals:
+                totals[attention] += 1
+            if attention != "done":
+                needs_attention.append({
+                    "course_id": cid,
+                    "course_name": cname,
+                    "assignment_id": item["assignment_id"],
+                    "name": item["name"],
+                    "due_at": item["due_at"],
+                    "due_at_local": item["due_at_local"],
+                    "status": status,
+                    "attention": attention,
+                    "url": item["url"],
+                })
+
+        if include_announcements:
+            try:
+                announcements = _canvas_get_all(
+                    session,
+                    base,
+                    "/api/v1/announcements",
+                    token,
+                    params=[
+                        ("context_codes[]", f"course_{cid}"),
+                        ("per_page", min(max(max_announcements_per_course, 1), 100)),
+                    ],
+                    max_items=max_announcements_per_course,
+                )
+            except Exception as exc:
+                course_item["announcements_error"] = str(exc)
+                announcements = []
+
+            for announcement in announcements:
+                if not isinstance(announcement, dict):
+                    continue
+                ann = {
+                    "announcement_id": announcement.get("id"),
+                    "title": announcement.get("title"),
+                    "posted_at": announcement.get("posted_at"),
+                    "posted_at_local": _canvas_local_time(announcement.get("posted_at")),
+                    "url": announcement.get("html_url") or f"{course_url}/discussion_topics/{announcement.get('id')}",
+                    "message_text": _canvas_clean_html(announcement.get("message")),
+                }
+                if include_html:
+                    ann["message_html"] = announcement.get("message")
+                course_item["announcements"].append(ann)
+                all_announcements.append({
+                    "course_id": cid,
+                    "course_name": cname,
+                    **ann,
+                })
+                totals["announcements"] += 1
+
+        overview_courses.append(course_item)
+
+    def _due_sort_key(item: dict) -> tuple[int, str]:
+        due = item.get("due_at")
+        return (0 if due else 1, due or "")
+
+    needs_attention.sort(key=_due_sort_key)
+    all_announcements.sort(key=lambda a: a.get("posted_at") or "", reverse=True)
+
+    return {
+        "canvas_base_url": base,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at_local": datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M"),
+        "summary": totals,
+        "needs_attention": needs_attention,
+        "recent_announcements": all_announcements,
+        "courses": overview_courses,
+        "notes": [
+            "Submission state is based on submission.workflow_state; Canvas submitted can be null.",
+            "All course, assignment, and announcement items include Canvas URLs when available.",
+        ],
+    }
+
+
 def tool_list_canvas_assignments(course_filter: str = "") -> dict:
     """列出 Canvas 上允许文件提交（online_upload）的作业，返回含 course_id / assignment_id。"""
     import requests as _req
@@ -3518,6 +3843,7 @@ def run_tool(name: str, args: dict) -> str:
         elif name == "setup_canvas":        r = tool_setup_canvas(**args)
         elif name == "login_platform":      r = tool_login_platform(args["platform"])
         elif name == "get_ddls":            r = tool_get_ddls(**args)
+        elif name == "get_canvas_overview": r = tool_get_canvas_overview(**args)
         elif name == "get_next_lab":        r = tool_get_next_lab()
         elif name == "get_all":             r = tool_get_all(**args)
         elif name == "download_assignments":r = tool_download_assignments(**args)
