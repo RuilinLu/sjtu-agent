@@ -65,6 +65,53 @@ def check_setup() -> str:
 
 
 @mcp.tool()
+def save_credentials(
+    jaccount_username: str = "",
+    jaccount_password: str = "",
+    canvas_token: str = "",
+    mooc_username: str = "",
+    mooc_password: str = "",
+) -> str:
+    """Save SJTU Agent credentials and Canvas token to the configured data dir."""
+
+    return _json_result(
+        "save_credentials",
+        {
+            "jaccount_username": jaccount_username,
+            "jaccount_password": jaccount_password,
+            "canvas_token": canvas_token,
+            "mooc_username": mooc_username,
+            "mooc_password": mooc_password,
+        },
+    )
+
+
+@mcp.tool()
+def setup_canvas(
+    open_browser: bool = False,
+    auto_create: bool = False,
+    token_purpose: str = "SJTU Agent",
+) -> str:
+    """Guide Canvas token setup or validate an existing Canvas token."""
+
+    return _json_result(
+        "setup_canvas",
+        {
+            "open_browser": open_browser,
+            "auto_create": auto_create,
+            "token_purpose": token_purpose,
+        },
+    )
+
+
+@mcp.tool()
+def login_platform(platform: str) -> str:
+    """Refresh cookies for a supported platform after credentials are configured."""
+
+    return _json_result("login_platform", {"platform": platform})
+
+
+@mcp.tool()
 def get_ddls(
     skip_canvas: bool = False,
     skip_aihaoke: bool = False,
